@@ -4,6 +4,10 @@
 #include "lib.h"
 #include "protocols.h"
 
+#define HOST_UNREACHABLE 0
+#define TIME_EXCEEDED 1
+
+
 /* Routing table */
 struct route_table_entry *rtable;
 int rtable_len;
@@ -59,6 +63,57 @@ struct arp_table_entry *get_mac_entry(uint32_t given_ip) {
 	return NULL;
 }
 
+void send_icmp(struct ether_header *eth_hdr, struct iphdr *ip_hdr, char *payload, int type, int interface) {
+	char *new_buf = malloc(sizeof(struct ether_header) + 2 * sizeof(struct iphdr) + sizeof(struct icmphdr) + 8);
+
+	// uint8_t temp[6];
+
+	// memcpy(temp, eth_hdr->ether_shost, 6);
+	memcpy(eth_hdr->ether_shost, eth_hdr->ether_dhost, 6);
+	// memcpy(eth_hdr->ether_dhost, temp, 6);
+	get_interface_mac(interface, eth_hdr->ether_shost);
+
+	memcpy(new_buf, eth_hdr, sizeof(struct ether_header));
+
+	struct icmphdr *icmp_hdr = malloc(sizeof(struct icmphdr));
+
+	struct iphdr *ip_header = malloc(sizeof(struct iphdr));
+	
+	ip_header->tos = 0;
+	ip_header->frag_off = htons(0);
+	ip_header->version = 4;
+	ip_header->ihl = 5;
+	ip_header->id = htons(1);
+	ip_header->ttl = 20;
+	ip_header->protocol = 1;
+	ip_header->tot_len = htons(2 * sizeof(struct iphdr) + sizeof(struct icmphdr) + 8);
+	ip_header->daddr = ip_hdr->saddr;
+	ip_header->saddr = inet_addr(get_interface_ip(interface));
+	ip_header->check = htons(checksum((uint16_t *)ip_header, sizeof(struct iphdr)));
+
+	memcpy(new_buf + sizeof(struct ether_header), ip_header, sizeof(struct iphdr));
+
+	if (type == HOST_UNREACHABLE) {
+		icmp_hdr->type = 3;
+		icmp_hdr->code = 0;
+	} else if (type == TIME_EXCEEDED) {
+		icmp_hdr->type = 11;
+		icmp_hdr->code = 0;
+	}
+
+	icmp_hdr->checksum = htons(checksum((uint16_t *)icmp_hdr, sizeof(struct icmphdr) + sizeof(struct iphdr) + 8));
+
+	memcpy(new_buf + sizeof(struct ether_header) + sizeof(struct iphdr), icmp_hdr, sizeof(struct icmphdr));
+
+	memcpy(new_buf + sizeof(struct ether_header) + sizeof(struct iphdr) + sizeof(struct icmphdr), ip_hdr, sizeof(struct iphdr));
+
+	memcpy(new_buf + sizeof(struct ether_header) + 2 * sizeof(struct iphdr) + sizeof(struct icmphdr), payload, 8);
+
+	send_to_link(interface, new_buf, sizeof(struct ether_header) + 2 * sizeof(struct iphdr) + sizeof(struct icmphdr) + 8);
+
+
+}
+
 int main(int argc, char *argv[])
 {
 	char buf[MAX_PACKET_LEN];
@@ -102,44 +157,48 @@ int main(int argc, char *argv[])
 
 		/* TODO 2.1: Check the ip_hdr integrity using ip_checksum((uint16_t *)ip_hdr, sizeof(struct iphdr)) */
 		
-		// int checksum_ret = ip_hdr->check;
-		// ip_hdr->check = 0;
-		
-		// // checksum((uint16_t *)ip_hdr, sizeof(struct iphdr));
-
-		// if (checksum((uint16_t *)ip_hdr, sizeof(struct iphdr)) != ntohs(checksum_ret))
-		// 	continue;
-		
-		// ip_hdr->check = checksum_ret;
-		
-
-		uint16_t checksum1 = ntohs(ip_hdr->check);
+		int checksum_ret = ip_hdr->check;
 		ip_hdr->check = 0;
-		uint16_t checksum2 = checksum((uint16_t *)ip_hdr, sizeof(struct iphdr));
+		
+		// checksum((uint16_t *)ip_hdr, sizeof(struct iphdr));
 
-		if (checksum1 != checksum2) {
-			printf("Wrong checksum\n");
+		if (checksum((uint16_t *)ip_hdr, sizeof(struct iphdr)) != ntohs(checksum_ret))
 			continue;
-		}
+		
+		ip_hdr->check = checksum_ret;
+		
+
+		// uint16_t checksum1 = ntohs(ip_hdr->check);
+		// ip_hdr->check = 0;
+		// uint16_t checksum2 = checksum((uint16_t *)ip_hdr, sizeof(struct iphdr));
+
+		// if (checksum1 != checksum2) {
+		// 	printf("Wrong checksum\n");
+		// 	continue;
+		// }
 
 		/* TODO 2.2: Call get_best_route to find the most specific route, continue; (drop) if null */
 		struct route_table_entry *best_route = get_best_route(ip_hdr->daddr);
-		if (best_route == NULL)
+		if (best_route == NULL) {
+			send_icmp(eth_hdr, ip_hdr, buf + sizeof(struct ether_header) + sizeof(struct iphdr), HOST_UNREACHABLE, interface);
+
 			continue;
+		}
 		/* TODO 2.3: Check TTL >= 1. Update TLL. Update checksum  */
 		int ttl = ip_hdr->ttl;
-		if (ttl > 1)
+		if (ttl > 1) {
 			ip_hdr->ttl--;
-		else 
+		} else {
+			send_icmp(eth_hdr, ip_hdr, buf + sizeof(struct ether_header) + sizeof(struct iphdr), TIME_EXCEEDED, interface);
 			continue;
-
+		}
 		// aicii
 
-		ip_hdr->check = 0;
-		uint16_t checksum3 = htons(checksum((uint16_t *)ip_hdr, sizeof(struct iphdr)));
-		ip_hdr->check = checksum3;
-		// int new_checksum = ~(~ip_hdr->check +  ~((uint16_t)ttl) + (uint16_t)ip_hdr->ttl) - 1;
-		// ip_hdr->check = new_checksum;
+		// ip_hdr->check = 0;
+		// uint16_t checksum3 = htons(checksum((uint16_t *)ip_hdr, sizeof(struct iphdr)));
+		// ip_hdr->check = checksum3;
+		int new_checksum = ~(~ip_hdr->check +  ~((uint16_t)ttl) + (uint16_t)ip_hdr->ttl) - 1;
+		ip_hdr->check = new_checksum;
 		// ip_hdr->check = 0;
 		// ip_hdr->check = checksum((uint16_t *)ip_hdr, sizeof(struct iphdr));
 		/* TODO 2.4: Update the ethernet addresses. Use get_mac_entry to find the destination MAC

@@ -6,7 +6,7 @@
 
 #define HOST_UNREACHABLE 0
 #define TIME_EXCEEDED 1
-
+#define ECHO_REPLY 2
 
 /* Routing table */
 struct route_table_entry *rtable;
@@ -79,6 +79,15 @@ void send_icmp(struct ether_header *eth_hdr, struct iphdr *ip_hdr, char *payload
 
 	struct iphdr *ip_header = malloc(sizeof(struct iphdr));
 	
+		if (type == ECHO_REPLY) {
+		icmp_hdr->type = 0;
+		icmp_hdr->code = 0;
+		icmp_hdr->checksum = htons(checksum((uint16_t *)icmp_hdr, sizeof(struct icmphdr) + sizeof(struct iphdr) + 8));
+		memcpy(new_buf + sizeof(struct ether_header) + sizeof(struct iphdr), icmp_hdr, sizeof(struct icmphdr));
+		memcpy(new_buf + sizeof(struct ether_header) + sizeof(struct iphdr) + sizeof(struct icmphdr), payload, 8);
+		send_to_link(interface, new_buf, sizeof(struct ether_header) + sizeof(struct iphdr) + sizeof(struct icmphdr) + 8 );
+	}	
+
 	ip_header->tos = 0;
 	ip_header->frag_off = htons(0);
 	ip_header->version = 4;
@@ -111,6 +120,45 @@ void send_icmp(struct ether_header *eth_hdr, struct iphdr *ip_hdr, char *payload
 
 	send_to_link(interface, new_buf, sizeof(struct ether_header) + 2 * sizeof(struct iphdr) + sizeof(struct icmphdr) + 8);
 
+
+}
+
+void send_echo_reply(char *buf, struct ether_header *eth_hdr, struct iphdr *ip_hdr, struct icmphdr *icmp_hdr, int len, int interface) {
+
+
+	// uint8_t temp[6];
+	memcpy(eth_hdr->ether_dhost, eth_hdr->ether_shost, 6);
+	// memcpy(eth_hdr->ether_dhost, temp, 6);
+	get_interface_mac(interface, eth_hdr->ether_shost);
+	// memcpy(eth_hdr->ether_shost, temp, 6);
+
+	// memcpy(new_buf, eth_hdr, sizeof(struct ether_header));
+
+
+	// struct iphdr *ip_header = malloc(sizeof(struct iphdr));
+	// memcpy(ip_header, ip_hdr, sizeof(struct iphdr));
+
+	uint32_t tmp;
+	tmp = ip_hdr->saddr;
+	ip_hdr->saddr = ip_hdr->daddr;
+	ip_hdr->daddr = tmp;
+	// ip_header->daddr = ip_hdr->saddr;
+	// ip_header->saddr = inet_addr(get_interface_ip(interface));
+	ip_hdr->check = 0;
+	ip_hdr->check = htons(checksum((uint16_t *)ip_hdr, sizeof(struct iphdr)));
+
+	// memcpy(new_buf + sizeof(struct ether_header), ip_header, sizeof(struct iphdr));
+
+	icmp_hdr->type = 0;
+	icmp_hdr->code = 0;
+	icmp_hdr->checksum = htons(checksum((uint16_t *)icmp_hdr, len - (sizeof(struct ether_header) + sizeof(struct iphdr))));
+
+	// memcpy(new_buf + sizeof(struct ether_header) + sizeof(struct iphdr), icmp_hdr, sizeof(struct icmphdr));
+
+	// memcpy(new_buf + sizeof(struct ether_header) + sizeof(struct iphdr) + sizeof(struct icmphdr), buf + (len - sizeof(struct iphdr) - sizeof(struct ether_header) - sizeof(struct icmphdr)),
+	//   len - sizeof(struct iphdr) - sizeof(struct ether_header) - sizeof(struct icmphdr));
+
+	send_to_link(interface, buf, len);
 
 }
 
@@ -157,6 +205,15 @@ int main(int argc, char *argv[])
 
 		/* TODO 2.1: Check the ip_hdr integrity using ip_checksum((uint16_t *)ip_hdr, sizeof(struct iphdr)) */
 		
+		if (ip_hdr->protocol == 1 && ip_hdr->daddr == inet_addr(get_interface_ip(interface))) {
+			struct icmphdr *icmp_hdr = (struct icmphdr *)(buf + sizeof(struct ether_header) + sizeof(struct iphdr));
+			if (icmp_hdr->type == 8) {
+				send_echo_reply(buf, eth_hdr, ip_hdr, icmp_hdr, len, interface);
+				continue;
+			}
+		}
+
+
 		int checksum_ret = ip_hdr->check;
 		ip_hdr->check = 0;
 		

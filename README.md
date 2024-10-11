@@ -1,6 +1,5 @@
-### TINTU Gabriel-Claudiu 323CAb - 2023-2024
+### TINTU Gabriel-Claudiu 2024
 
-### PCOM - first assignment
 # Dataplane-router
 
 #### Solved the IPv4 and ICMP tasks

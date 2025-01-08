@@ -1,8 +1,6 @@
-### TINTU Gabriel-Claudiu 2024
+### © 2024 Gabriel-Claudiu TINTU
 
 # Dataplane-router
-
-#### Solved the IPv4 and ICMP tasks
 
 Start by parsing the routing and ARP table and sort the routing one in a
 descending order.
